@@ -1,26 +1,235 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ─────────────────────────────────────────────
+   Google Fonts — Inter
+   ───────────────────────────────────────────── */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* ─────────────────────────────────────────────
+   Design Tokens
+   ───────────────────────────────────────────── */
+@theme {
+  /* Colour */
+  --color-background: #050508;
+  --color-foreground: #ededed;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --color-glass-light:         rgba(255, 255, 255, 0.02);
+  --color-glass-base:          rgba(255, 255, 255, 0.04);
+  --color-glass-strong:        rgba(255, 255, 255, 0.07);
+  --color-glass-border:        rgba(255, 255, 255, 0.08);
+  --color-glass-border-strong: rgba(255, 255, 255, 0.18);
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Animations */
+  --animate-shimmer:    shimmer 2.5s linear infinite;
+  --animate-pulse-slow: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-float:      float 6s ease-in-out infinite;
+  --animate-draw:       draw 1.2s ease forwards;
+
+  @keyframes shimmer {
+    from { background-position: 200% 0; }
+    to   { background-position: -200% 0; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50%       { transform: translateY(-8px); }
+  }
+  @keyframes draw {
+    from { stroke-dashoffset: 1000; }
+    to   { stroke-dashoffset: 0; }
+  }
+  @keyframes glow-pulse {
+    0%, 100% { opacity: 0.4; }
+    50%       { opacity: 0.8; }
   }
 }
 
+/* ─────────────────────────────────────────────
+   Base Reset
+   ───────────────────────────────────────────── */
+:root {
+  --background: #050508;
+  --foreground: #ededed;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  font-feature-settings: "cv11", "ss01";
+}
+
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-image:
+    radial-gradient(ellipse at 15% 50%,  rgba(99, 102, 241, 0.045) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 20%,  rgba(99, 102, 241, 0.03)  0%, transparent 45%),
+    radial-gradient(ellipse at 50% 100%, rgba(99, 102, 241, 0.025) 0%, transparent 60%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* ─────────────────────────────────────────────
+   Shared Utilities
+   ───────────────────────────────────────────── */
+@layer utilities {
+
+  /* Layout */
+  .site-container {
+    @apply w-full max-w-5xl mx-auto px-5 md:px-8;
+  }
+
+  /* Glass Surfaces */
+  .glass-panel {
+    @apply bg-glass-base border border-glass-border backdrop-blur-xl shadow-xl;
+  }
+  .glass-card {
+    @apply bg-glass-light border border-glass-border backdrop-blur-md rounded-2xl shadow-lg transition-all duration-200;
+  }
+  .glass-card:hover {
+    @apply bg-glass-base border-glass-border-strong;
+  }
+
+  /* ── Typography Scale ─────────────────────── */
+
+  /* Hero — page-level headline */
+  .text-hero {
+    @apply text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-none;
+  }
+
+  /* Display — large section intro */
+  .text-display {
+    @apply text-2xl md:text-3xl font-bold tracking-tight leading-tight;
+  }
+
+  /* Heading — section heading */
+  .text-heading {
+    @apply text-lg md:text-xl font-semibold tracking-tight;
+  }
+
+  /* Subheading — card/sub-section heading */
+  .text-subheading {
+    @apply text-sm font-semibold tracking-tight;
+  }
+
+  /* Body — main readable text */
+  .text-body {
+    @apply text-sm md:text-[15px] leading-relaxed font-normal text-foreground/80;
+  }
+
+  /* Body small — captions, secondary */
+  .text-body-sm {
+    @apply text-xs md:text-sm leading-relaxed font-normal text-foreground/60;
+  }
+
+  /* Label — compact overlines, eyebrows */
+  .text-label {
+    @apply text-[10px] md:text-xs font-semibold tracking-widest uppercase text-foreground/40;
+  }
+
+  /* Mono small — IDs, codes, technical */
+  .text-code {
+    @apply text-xs font-mono text-foreground/50;
+  }
+
+  /* ── Buttons ──────────────────────────────── */
+
+  /* Primary — solid accent */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold
+           bg-indigo-600 hover:bg-indigo-500 text-white
+           transition-all duration-200 outline-none
+           focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+
+  /* Secondary — ghost glass */
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium
+           bg-white/[0.04] border border-glass-border hover:bg-white/[0.08] hover:border-glass-border-strong
+           text-foreground/80 hover:text-foreground
+           transition-all duration-200 outline-none;
+  }
+
+  /* Ghost — bare, text-only */
+  .btn-ghost {
+    @apply inline-flex items-center gap-1.5 text-sm font-medium
+           text-foreground/50 hover:text-foreground
+           transition-colors duration-150 outline-none;
+  }
+
+  /* ── Form Controls ────────────────────────── */
+
+  .input-base {
+    @apply w-full bg-white/[0.03] border border-glass-border rounded-xl
+           px-3.5 py-2.5 text-sm text-foreground
+           placeholder:text-foreground/25
+           outline-none focus:border-glass-border-strong focus:bg-white/[0.05]
+           transition-all duration-150;
+  }
+
+  .label-base {
+    @apply block text-xs font-medium text-foreground/50 mb-1.5;
+  }
+
+  /* ── Admin-only utilities (kept separate) ─── */
+  .admin-input {
+    @apply w-full bg-white/[0.03] border border-glass-border rounded-xl
+           px-3.5 py-2.5 text-sm text-foreground
+           placeholder:text-foreground/25
+           outline-none focus:border-glass-border-strong focus:bg-white/[0.05]
+           transition-all duration-150;
+  }
+  .admin-label {
+    @apply block text-xs font-medium text-foreground/45 mb-1.5;
+  }
+  .admin-btn {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium
+           bg-white/[0.05] border border-glass-border hover:bg-white/[0.09] hover:border-glass-border-strong
+           text-foreground transition-all duration-200;
+  }
+
+  /* ── Verdict Badge ────────────────────────── */
+  .verdict-true    { @apply text-emerald-400 bg-emerald-500/10 border-emerald-500/25; }
+  .verdict-false   { @apply text-red-400     bg-red-500/10     border-red-500/25; }
+  .verdict-mixed   { @apply text-amber-400   bg-amber-500/10   border-amber-500/25; }
+  .verdict-unknown { @apply text-slate-400   bg-slate-500/10   border-slate-500/25; }
+
+  /* ── Lab Animations ───────────────────────── */
+  .lab-node {
+    @apply w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0
+           bg-white/[0.04] border border-glass-border;
+  }
+  .lab-node-active {
+    @apply bg-indigo-500/15 border-indigo-500/40 shadow-[0_0_20px_rgba(99,102,241,0.15)];
+  }
+  .lab-connector {
+    @apply w-px bg-glass-border flex-shrink-0;
+  }
+}
+
+/* ─────────────────────────────────────────────
+   Reduced Motion
+   ───────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

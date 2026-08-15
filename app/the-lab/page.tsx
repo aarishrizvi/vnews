@@ -1,5 +1,5 @@
 'use client';
-
+import { InvestigationField } from '@/components/InvestigationField';
 import { useEffect, useState, useCallback } from 'react';
 import { db } from '@/lib/firebase/config';
 import { collection, query, orderBy, getDocs } from 'firebase/firestore';
@@ -752,61 +752,68 @@ export default function TheLab() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
 
   return (
-    <div className="site-container py-10">
-      <div className="flex flex-col md:flex-row gap-6">
+    <div className="relative min-h-screen">
 
-        {/* ── Sidebar ────────────────────────── */}
-        <aside className="w-full md:w-56 flex-shrink-0">
-          <div className="glass-panel p-3 rounded-2xl sticky top-28">
-            {/* Wordmark */}
-            <div className="px-3 py-2.5 mb-1">
-              <p className="text-label text-indigo-400">The Lab</p>
-              <p className="text-[10px] text-foreground/20 font-mono mt-0.5">VNews Lab · RAG Engine</p>
+      {/* Investigation network background */}
+      <InvestigationField />
+
+      {/* Lab content */}
+      <div className="relative z-10 site-container py-10">
+        <div className="flex flex-col md:flex-row gap-6">
+
+          {/* ── Sidebar ────────────────────────── */}
+          <aside className="w-full md:w-64 xl:w-72 flex-shrink-0">
+            <div className="glass-panel p-3 rounded-2xl sticky top-28">
+              {/* Wordmark */}
+              <div className="px-3 py-2.5 mb-1">
+                <p className="text-label text-indigo-400">The Lab</p>
+                <p className="text-[10px] text-foreground/20 font-mono mt-0.5">VNews Lab · RAG Engine</p>
+              </div>
+
+              <nav className="flex flex-col gap-0.5">
+                {MENU_ITEMS.map(item => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setActiveTab(item.id as Tab)}
+                      className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-xl text-sm transition-all duration-150 text-left ${isActive
+                        ? 'bg-white/[0.07] text-foreground border border-glass-border'
+                        : 'text-foreground/45 hover:text-foreground/75 hover:bg-white/[0.03]'
+                        }`}
+                    >
+                      <Icon
+                        size={14}
+                        className={isActive ? 'text-indigo-400' : 'text-foreground/30'}
+                      />
+                      <span className="font-medium">{item.name}</span>
+                    </button>
+                  );
+                })}
+              </nav>
             </div>
+          </aside>
 
-            <nav className="flex flex-col gap-0.5">
-              {MENU_ITEMS.map(item => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => setActiveTab(item.id as Tab)}
-                    className={`flex items-center gap-2.5 w-full px-3 py-2.5 rounded-xl text-sm transition-all duration-150 text-left ${isActive
-                      ? 'bg-white/[0.07] text-foreground border border-glass-border'
-                      : 'text-foreground/45 hover:text-foreground/75 hover:bg-white/[0.03]'
-                      }`}
-                  >
-                    <Icon
-                      size={14}
-                      className={isActive ? 'text-indigo-400' : 'text-foreground/30'}
-                    />
-                    <span className="font-medium">{item.name}</span>
-                  </button>
-                );
-              })}
-            </nav>
+          {/* ── Main Content ────────────────────── */}
+          <div className="flex-1 min-w-0">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.2, ease: 'easeInOut' }}
+                className="glass-panel rounded-2xl p-6 md:p-8 min-h-[500px]"
+              >
+                {activeTab === 'overview' && <OverviewView />}
+                {activeTab === 'pipeline' && <PipelineView />}
+                {activeTab === 'rag' && <RagView />}
+                {activeTab === 'kb' && <KnowledgeBaseView />}
+                {activeTab === 'sources' && <SourcesView />}
+              </motion.div>
+            </AnimatePresence>
           </div>
-        </aside>
-
-        {/* ── Main Content ────────────────────── */}
-        <div className="flex-1 min-w-0">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2, ease: 'easeInOut' }}
-              className="glass-panel rounded-2xl p-6 md:p-8 min-h-[500px]"
-            >
-              {activeTab === 'overview' && <OverviewView />}
-              {activeTab === 'pipeline' && <PipelineView />}
-              {activeTab === 'rag' && <RagView />}
-              {activeTab === 'kb' && <KnowledgeBaseView />}
-              {activeTab === 'sources' && <SourcesView />}
-            </motion.div>
-          </AnimatePresence>
         </div>
       </div>
     </div>

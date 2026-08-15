@@ -70,13 +70,12 @@ export function VerificationStages({ onComplete }: { onComplete: () => void }) {
                 </div>
 
                 <span
-                  className={`text-sm transition-colors duration-300 ${
-                    isCompleted
+                  className={`text-sm transition-colors duration-300 ${isCompleted
                       ? 'text-foreground/40'
                       : isActive
-                      ? 'text-foreground font-medium'
-                      : 'text-foreground/25'
-                  }`}
+                        ? 'text-foreground font-medium'
+                        : 'text-foreground/25'
+                    }`}
                 >
                   {stage}
                 </span>

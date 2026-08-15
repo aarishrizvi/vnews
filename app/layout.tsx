@@ -29,7 +29,7 @@ export default function RootLayout({
       <body className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}>
         <AuthProvider>
           <Navbar />
-          <main className="pt-24 min-h-screen">
+          <main className="pt-10 min-h-screen">
             {children}
           </main>
         </AuthProvider>

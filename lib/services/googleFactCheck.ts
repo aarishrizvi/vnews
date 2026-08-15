@@ -10,7 +10,7 @@ export async function checkGoogleFactCheckAPI(query: string): Promise<ExternalFa
 
   try {
     const url = `https://factchecktools.googleapis.com/v1alpha1/claims:search?query=${encodeURIComponent(query)}&key=${API_KEY}`;
-    
+
     const response = await fetch(url, {
       next: { revalidate: 3600 } // Cache for an hour
     });
@@ -21,11 +21,27 @@ export async function checkGoogleFactCheckAPI(query: string): Promise<ExternalFa
     }
 
     const data = await response.json();
-    
+
+    // if (!data.claims || data.claims.length === 0) {
+    //   return [];
+    // }
     if (!data.claims || data.claims.length === 0) {
+      console.log("Google Fact Check: No results for:", query);
       return [];
     }
 
+    console.log(
+      "Google Fact Check results:",
+      data.claims.map((claim: GoogleClaim) => ({
+        claim: claim.text,
+        reviews: claim.claimReview?.map(review => ({
+          publisher: review.publisher?.name,
+          rating: review.textualRating,
+          title: review.title,
+          url: review.url
+        }))
+      }))
+    );
     interface GoogleClaim {
       text: string;
       claimReview?: Array<{

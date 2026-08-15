@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { db } from '@/lib/firebase/config';
 import { motion, AnimatePresence } from 'framer-motion';
 import Image from 'next/image';
+import SpecularButton from '@/components/ui/SpecularButton';
 import {
   ShieldCheck,
   Loader2,
@@ -573,14 +574,20 @@ function AddKnowledgeView({ user, onSuccess }: { user: any; onSuccess: () => voi
         )}
       </AnimatePresence>
 
-      <button
-        type="submit"
-        disabled={isProcessing}
-        className="admin-btn flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <BookText size={14} />}
-        Add to Knowledge Base
-      </button>
+      <div className="pt-2">
+        <SpecularButton
+          type="submit"
+          disabled={isProcessing}
+          size="md"
+          className="w-full sm:w-auto"
+        >
+          {isProcessing ? (
+            <span className="flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Processing...</span>
+          ) : (
+            <span className="flex items-center gap-2"><BookText size={16} /> Add to Knowledge Base</span>
+          )}
+        </SpecularButton>
+      </div>
     </form>
   );
 }

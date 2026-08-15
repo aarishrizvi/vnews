@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { VerifyBar, VerifyState } from '@/components/VerifyBar';
+import { InvestigationField } from '@/components/InvestigationField';
 import { motion } from 'framer-motion';
 
 export default function Home() {
@@ -48,46 +49,80 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[80vh] px-5">
+    <div className="relative flex flex-col items-center justify-center min-h-[88vh] px-5 overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden">
+        <InvestigationField />
+      </div>
+
+      {/* Soft radial center mask — keeps center clean */}
+      <div
+        className="absolute inset-0 pointer-events-none z-[1]"
+        style={{
+          background:
+            'radial-gradient(ellipse 70% 60% at 50% 50%, transparent 0%, rgba(5,5,8,0.65) 75%)',
+        }}
+        aria-hidden="true"
+      />
+
       <motion.div
-        initial={{ opacity: 0, y: 24 }}
+        initial={{ opacity: 0, y: 32 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-        className="w-full max-w-3xl flex flex-col items-center text-center gap-10"
+        transition={{ duration: 0.75, ease: [0.16, 1, 0.3, 1] }}
+        className="relative z-10 w-full max-w-3xl flex flex-col items-center text-center gap-10"
       >
-        {/* Headline */}
-        <div className="space-y-4">
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1, duration: 0.6 }}
-            className="text-label"
-          >
-            AI News Verification
-          </motion.div>
+        {/* Identity tag */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, duration: 0.5 }}
+          className="flex items-center gap-2.5"
+        >
+        </motion.div>
+
+        {/* Hero headline — two-line display */}
+        <div className="space-y-0">
           <motion.h1
-            initial={{ opacity: 0, y: 16 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15, duration: 0.7 }}
-            className="text-hero text-transparent bg-clip-text bg-gradient-to-br from-white via-white/90 to-white/40"
+            transition={{ delay: 0.15, duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
           >
-            Verify what you read.
+            <span
+              className="block text-display-xl text-transparent bg-clip-text"
+              style={{
+                backgroundImage:
+                  'linear-gradient(165deg, #ffffff 0%, rgba(255,255,255,0.85) 45%, rgba(255,255,255,0.35) 100%)',
+              }}
+            >
+              VERIFY
+            </span>
+            <span
+              className="block text-display-xl text-transparent bg-clip-text mt-1"
+              style={{
+                backgroundImage:
+                  'linear-gradient(165deg, rgba(255,255,255,0.65) 0%, rgba(255,255,255,0.3) 100%)',
+              }}
+            >
+              WHAT YOU READ.
+            </span>
           </motion.h1>
-          <motion.p
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.25, duration: 0.6 }}
-            className="text-body max-w-lg mx-auto text-foreground/55"
-          >
-            VNews Lab investigates claims using live retrieval, semantic analysis, and external evidence sources.
-          </motion.p>
         </div>
 
-        {/* Search Bar */}
+        {/* Sub-copy */}
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.6 }}
+          className="text-body max-w-md mx-auto text-foreground/45"
+        >
+          Drop a claim. VNews Lab investigates with live retrieval,
+          semantic analysis, and cross-referenced fact checks.
+        </motion.p>
+
+        {/* Search bar */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35, duration: 0.6 }}
+          transition={{ delay: 0.4, duration: 0.6 }}
           className="w-full"
         >
           <VerifyBar
@@ -96,16 +131,6 @@ export default function Home() {
             errorMessage={errorMessage}
           />
         </motion.div>
-
-        {/* Footer hint */}
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5, duration: 0.6 }}
-          className="text-label text-foreground/25"
-        >
-          Powered by Gemini · Pinecone · Google Fact Check
-        </motion.p>
       </motion.div>
     </div>
   );

@@ -43,6 +43,7 @@ export interface VerificationResult {
   contradictingEvidence: Source[];
   externalFactChecks: ExternalFactCheck[];
   sourceOrigin?: SourceOrigin;
+  isProvisional?: boolean;
   timestamp: number;
 }
 

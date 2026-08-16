@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { searchPinecone } from './pinecone';
 import { checkGoogleFactCheckAPI } from './googleFactCheck';
+import { searchWeb, WebSearchResult } from './webSearch';
 import {
   VerificationResult,
   Source,
@@ -18,6 +19,7 @@ function generatePrompt(
   query: string,
   sources: Source[],
   factCheckResults: ExternalFactCheck[],
+  webResults: WebSearchResult[],
   isInitial: boolean = false
 ) {
   return `You are the core evidence-analysis engine for VNews Lab, an AI news verification platform.
@@ -27,11 +29,14 @@ Your job is to determine whether the user's CLAIM is supported, contradicted, mi
 USER CLAIM:
 "${query}"
 
-LOCAL KNOWLEDGE BASE EVIDENCE:
+RETRIEVED EVIDENCE:
 ${JSON.stringify(sources, null, 2)}
 
 GOOGLE FACT CHECK RESULTS:
 ${JSON.stringify(factCheckResults, null, 2)}
+
+LIVE NEWS SEARCH RESULTS:
+${JSON.stringify(webResults, null, 2)}
 
 IMPORTANT EVIDENCE RULES:
 
@@ -78,10 +83,22 @@ IMPORTANT EVIDENCE RULES:
 
 11. Confidence must represent the strength of the QUALIFIED evidence supporting the final verdict, not merely the number of retrieved results.
 
+12. LIVE NEWS RELEVANCE IS STRICT.
+   A live news result is evidence ONLY when its title or snippet directly addresses the specific user claim.
+   Do NOT treat an article as evidence merely because it mentions the same person, country, organization, conflict, or topic.
+   Search-result quantity NEVER determines the verdict.
+   For example, articles about Iran, Trump, war, sanctions, or Khamenei's politics are NOT evidence that Khamenei is alive or dead unless they directly address his current status.
+   A directly relevant report confirming death may support the claim.
+   A directly relevant report confirming life or denying the death claim may contradict it.
+   If live news is merely topical or inconclusive, ignore it for verdict purposes.
+
+13. MIXED is allowed ONLY when there is meaningful, direct, relevant evidence on BOTH sides.
+   Do not use MIXED because evidence is merely related, inconclusive, old, or contradictory in wording.
+
 ${isInitial
-      ? `12. This is an INITIAL RAPID PASS.
+      ? `14. This is an INITIAL RAPID PASS.
 The evidence may be incomplete. Treat the result as provisional and be conservative.`
-      : `12. This is the FINAL ANALYSIS.
+      : `14. This is the FINAL ANALYSIS.
 Use all relevant evidence provided, but ignore evidence that does not actually address the user's claim.`
     }
 
@@ -98,11 +115,12 @@ Return ONLY a strict JSON object using exactly this structure:
 Additional requirements:
 
 - confidence must be between 0.0 and 1.0.
-- supportingEvidenceIds may ONLY contain IDs from LOCAL KNOWLEDGE BASE EVIDENCE.
-- contradictingEvidenceIds may ONLY contain IDs from LOCAL KNOWLEDGE BASE EVIDENCE.
+- supportingEvidenceIds may ONLY contain IDs from RETRIEVED EVIDENCE.
+- contradictingEvidenceIds may ONLY contain IDs from RETRIEVED EVIDENCE.
 - Never invent evidence IDs.
-- Do not put Google Fact Check IDs into those arrays because Google results do not have local evidence IDs.
-- If no local evidence is relevant, return empty arrays.
+- Do not put Google Fact Check IDs into those arrays.
+- Live news evidence IDs are valid evidence IDs.
+- If no retrieved evidence is directly relevant, return empty arrays.
 `;
 }
 
@@ -156,13 +174,28 @@ export async function runProgressiveVerification(
 
   const pineconePromise = searchPinecone(query, 5);
 
+  const webSearchPromise = searchWeb(query);
+
   /*
    * ---------------------------------------------------------
    * FAST PASS
    * ---------------------------------------------------------
    */
 
-  const factCheckResults = await factCheckPromise;
+  const retrievalStart = Date.now();
+
+  const [factCheckResults, webResults] = await Promise.all([
+    factCheckPromise,
+    webSearchPromise,
+  ]);
+
+  console.log(
+    `Retrieval completed in ${Date.now() - retrievalStart}ms`,
+    {
+      factChecks: factCheckResults.length,
+      webResults: webResults.length,
+    }
+  );
 
   let initialResult: VerificationResult;
 
@@ -175,10 +208,14 @@ export async function runProgressiveVerification(
       query,
       [],
       factCheckResults,
+      webResults,
       true
     );
 
     try {
+      console.log('Starting Gemma initial analysis...');
+      const initialGemmaStart = Date.now();
+
       const response = await ai.models.generateContent({
         model: 'gemma-4-31b-it',
         contents: prompt,
@@ -187,6 +224,9 @@ export async function runProgressiveVerification(
         },
       });
 
+      console.log(
+        `Gemma initial analysis completed in ${Date.now() - initialGemmaStart}ms.`
+      );
       const llmResult = JSON.parse(
         response.text || '{}'
       );
@@ -317,16 +357,36 @@ export async function runProgressiveVerification(
     })
   );
 
+  // Convert NewsAPI results into the same Source shape used by the
+  // Results tab. These can now be cited by the final analysis.
+  const webSources: Source[] = webResults.map((result, index) => ({
+    id: `web-${index}`,
+    title: result.title,
+    snippet: result.snippet,
+    url: result.url,
+    publicationDate: result.publishedDate,
+    metadata: {
+      origin: 'live-news',
+      source: result.source || '',
+    },
+  }));
+
+  // Pinecone + live news are one evidence pool for final reasoning.
+  const retrievedSources: Source[] = [
+    ...sources,
+    ...webSources,
+  ];
+
   /*
    * ---------------------------------------------------------
    * NO QUALIFYING LOCAL EVIDENCE
    * ---------------------------------------------------------
    */
 
-  if (sources.length === 0) {
+  if (retrievedSources.length === 0) {
     emit('status', {
       message:
-        'No sufficiently relevant Knowledge Base evidence found. Performing final evidence assessment...',
+        'No sufficiently relevant retrieved evidence found. Performing final evidence assessment...',
     });
 
     if (!ai) {
@@ -335,7 +395,7 @@ export async function runProgressiveVerification(
         verdict: 'INSUFFICIENT EVIDENCE',
         confidence: 0,
         analysis:
-          'No sufficiently relevant local evidence was retrieved, so the available evidence is insufficient for a definitive verdict.',
+          'No sufficiently relevant retrieved evidence was found, so the available evidence is insufficient for a definitive verdict.',
         supportingEvidence: [],
         contradictingEvidence: [],
         isProvisional: false,
@@ -349,8 +409,12 @@ export async function runProgressiveVerification(
         query,
         [],
         factCheckResults,
-        false
-      );
+        webResults,
+        true
+      )
+
+      console.log('Starting Gemma final analysis (no local evidence)...');
+      const finalGemmaStart = Date.now();
 
       const response =
         await ai.models.generateContent({
@@ -360,6 +424,10 @@ export async function runProgressiveVerification(
             responseMimeType: 'application/json',
           },
         });
+
+      console.log(
+        `Gemma final analysis (no local evidence) completed in ${Date.now() - finalGemmaStart}ms.`
+      );
 
       const llmResult = JSON.parse(
         response.text || '{}'
@@ -415,7 +483,7 @@ export async function runProgressiveVerification(
         verdict: 'INSUFFICIENT EVIDENCE',
         confidence: 0,
         analysis:
-          'The available evidence could not be reliably analyzed. No sufficiently relevant local evidence was retrieved.',
+          'The available evidence could not be reliably analyzed. No sufficiently relevant retrieved evidence was found.',
         supportingEvidence: [],
         contradictingEvidence: [],
         isProvisional: false,
@@ -440,10 +508,14 @@ export async function runProgressiveVerification(
     try {
       const prompt = generatePrompt(
         query,
-        sources,
+        retrievedSources,
         factCheckResults,
+        webResults,
         false
       );
+
+      console.log('Starting Gemma final deep analysis...');
+      const finalDeepGemmaStart = Date.now();
 
       const response =
         await ai.models.generateContent({
@@ -453,6 +525,10 @@ export async function runProgressiveVerification(
             responseMimeType: 'application/json',
           },
         });
+
+      console.log(
+        `Gemma final deep analysis completed in ${Date.now() - finalDeepGemmaStart}ms.`
+      );
 
       const llmResult = JSON.parse(
         response.text || '{}'
@@ -493,14 +569,26 @@ export async function runProgressiveVerification(
        * retrieved source set.
        */
       const supportingEvidence =
-        sources.filter((source) =>
+        retrievedSources.filter((source) =>
           supportingIds.includes(source.id)
         );
 
       const contradictingEvidence =
-        sources.filter((source) =>
+        retrievedSources.filter((source) =>
           contradictingIds.includes(source.id)
         );
+
+      // Guardrail: MIXED requires actual evidence selected on both sides.
+      // Never allow a model to return MIXED when it did not identify
+      // meaningful supporting and contradicting evidence.
+      const normalizedVerdict: VerificationVerdict =
+        verdict === 'MIXED' &&
+          (
+            supportingEvidence.length === 0 ||
+            contradictingEvidence.length === 0
+          )
+          ? 'INSUFFICIENT EVIDENCE'
+          : verdict;
 
       const finalResult: VerificationResult = {
         id: verificationId,

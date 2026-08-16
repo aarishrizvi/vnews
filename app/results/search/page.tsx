@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { VerificationStages } from '@/components/VerificationStages';
@@ -16,8 +16,12 @@ function SearchResultsContent() {
   const [stage, setStage] = useState<'loading_stages' | 'fetching' | 'complete' | 'error'>('loading_stages');
   const [result, setResult] = useState<VerificationResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const requestStartedRef = useRef(false);
 
   useEffect(() => {
+    if (requestStartedRef.current) return;
+    requestStartedRef.current = true;
+
     if (!query) {
       setStage('error');
       setErrorMsg("No query provided.");

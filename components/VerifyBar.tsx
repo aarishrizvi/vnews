@@ -78,7 +78,11 @@ export function VerifyBar({ onVerify, currentState, errorMessage, className }: V
         variants={barVariants}
         initial="idle"
         animate={displayState}
-        transition={{ type: "spring", stiffness: 300, damping: 25 }}
+        transition={
+  displayState === "error"
+    ? { duration: 0.45, ease: "easeInOut" }
+    : { type: "spring", stiffness: 300, damping: 25 }
+}
       >
         <div className="flex shrink-0 items-center justify-center w-12 sm:w-16 h-full text-foreground/50">
           <AnimatePresence mode="wait">

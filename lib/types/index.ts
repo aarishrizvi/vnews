@@ -1,4 +1,10 @@
-export type VerificationVerdict = 'TRUE' | 'FALSE' | 'MIXED' | 'INSUFFICIENT EVIDENCE' | 'SYSTEM ERROR';
+export type VerificationVerdict =
+  | 'TRUE'
+  | 'FALSE'
+  | 'MIXED'
+  | 'UNVERIFIED'
+  | 'SYSTEM ERROR';
+
 export type RetrievalStatus = 'SUCCESS' | 'EMPTY' | 'ERROR';
 
 export interface ClaimContext {
@@ -8,6 +14,7 @@ export interface ClaimContext {
   temporalContext?: string;
   claimType?: string;
 }
+
 export interface Source {
   id: string;
   title?: string;
@@ -70,7 +77,7 @@ export interface SearchRecord {
   userId?: string;
   claim: string;
   timestamp: number;
-  resultId?: string; // Links to VerificationResult if saved
+  resultId?: string;
 }
 
 export interface DocumentChunk {

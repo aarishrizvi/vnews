@@ -77,6 +77,39 @@ function getVerdictConfig(verdict: string) {
         icon: ShieldQuestion,
         label: 'MIXED',
       };
+    case 'AI_ANALYSIS_TIMEOUT':
+      return {
+        color: 'text-orange-400',
+        colorHex: '#fbbf24',
+        border: 'border-orange-500/20',
+        bg: 'bg-orange-500/[0.08]',
+        glow: '0 0 60px rgba(251,146,60,0.12)',
+        bar: 'bg-orange-500',
+        icon: ShieldQuestion,
+        label: 'AI ANALYSIS TIMEOUT',
+      };
+    case 'PROVIDER_ERROR':
+      return {
+        color: 'text-slate-300',
+        colorHex: '#cbd5e1',
+        border: 'border-slate-500/20',
+        bg: 'bg-slate-500/[0.08]',
+        glow: '0 0 40px rgba(148,163,184,0.08)',
+        bar: 'bg-slate-500',
+        icon: HelpCircle,
+        label: 'PROVIDER ERROR',
+      };
+      case 'UNVERIFIED':
+  return {
+    color: 'text-slate-400',
+    colorHex: '#94a3b8',
+    border: 'border-slate-500/20',
+    bg: 'bg-slate-500/[0.08]',
+    glow: '0 0 40px rgba(148,163,184,0.08)',
+    bar: 'bg-slate-500',
+    icon: HelpCircle,
+    label: 'UNVERIFIED',
+  };
     default:
       return {
         color: 'text-slate-400',
@@ -86,7 +119,7 @@ function getVerdictConfig(verdict: string) {
         glow: '0 0 40px rgba(148,163,184,0.08)',
         bar: 'bg-slate-500',
         icon: HelpCircle,
-        label: 'INSUFFICIENT EVIDENCE',
+        label: 'UNVERIFIED',
       };
   }
 }

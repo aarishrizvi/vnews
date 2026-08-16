@@ -25,10 +25,17 @@ export async function POST(request: Request) {
       rateLimitMap.set(ip, { count: 1, resetTime: now + 60000 });
     }
 
-    const { query } = await request.json();
-    
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "INVALID_JSON" }), { status: 400 });
+    }
+
+    const { query } = (body && typeof body === 'object' ? body as { query?: unknown } : {});
+
     // Request Validation
-    if (!query || typeof query !== 'string') {
+    if (typeof query !== 'string' || !query.trim()) {
       return new Response(JSON.stringify({ error: "INVALID_CLAIM" }), { status: 400 });
     }
     
@@ -49,30 +56,31 @@ export async function POST(request: Request) {
           controller.close();
         });
 
-        const emit = (event: string, data: any) => {
+        const emit = (event: string, data: unknown) => {
           if (isAborted) return;
           controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         };
-        
+
         try {
-          // Timeout promise for the whole verification process (e.g. 45 seconds)
           const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("TIMEOUT")), 45000);
+            setTimeout(() => reject(new Error("TIMEOUT")), 120000);
           });
-          
+
           await Promise.race([
             runProgressiveVerification(query, emit),
             timeoutPromise
           ]);
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error("Verification execution failed", error);
           if (isAborted) return;
-          
-          if (error?.message === 'TIMEOUT') {
+
+          const message = error instanceof Error ? error.message : String(error);
+          if (message === 'TIMEOUT') {
             emit('error', { message: "TIMEOUT" });
-          } else if (error?.status === 429 || 
-              error?.message?.toLowerCase().includes('quota') || 
-              error?.message?.toLowerCase().includes('limit')) {
+          } else if (
+              (error as { status?: number })?.status === 429 ||
+              message.toLowerCase().includes('quota') ||
+              message.toLowerCase().includes('limit')) {
             emit('error', { message: "RATE_LIMIT" });
           } else {
             emit('error', { message: "INTERNAL_ERROR" });
@@ -92,7 +100,7 @@ export async function POST(request: Request) {
         'Connection': 'keep-alive',
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("API route error", error);
     return new Response(JSON.stringify({ error: "INTERNAL_ERROR" }), { status: 500 });
   }

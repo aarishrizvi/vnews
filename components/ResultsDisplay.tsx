@@ -94,11 +94,19 @@ function getVerdictConfig(verdict: string) {
 // ── Evidence card ────────────────────────────────────────────────────────────
 
 function EvidenceCard({ source, type }: { source: Source; type: 'support' | 'contradict' }) {
-  const accent = type === 'support' ? 'border-l-emerald-500/50 bg-emerald-500/[0.03]' : 'border-l-red-500/50 bg-red-500/[0.03]';
+  const isDirect = source.relevance === 'DIRECT';
+  
+  const accent = type === 'support' 
+    ? (isDirect ? 'border-l-emerald-500/50 bg-emerald-500/[0.03]' : 'border-l-emerald-500/30 bg-white/[0.02]')
+    : (isDirect ? 'border-l-red-500/50 bg-red-500/[0.03]' : 'border-l-red-500/30 bg-white/[0.02]');
+    
   const badge = type === 'support'
-    ? 'text-emerald-400 border-emerald-500/20'
-    : 'text-red-400 border-red-500/20';
-  const badgeLabel = type === 'support' ? 'SUPPORTS' : 'CONTRADICTS';
+    ? (isDirect ? 'text-emerald-400 border-emerald-500/20' : 'text-emerald-400/70 border-emerald-500/10')
+    : (isDirect ? 'text-red-400 border-red-500/20' : 'text-red-400/70 border-red-500/10');
+    
+  const badgeLabel = source.relevance === 'RELATED' || source.relevance === 'TOPICAL'
+    ? 'CONTEXT ONLY'
+    : (type === 'support' ? 'SUPPORTS CLAIM' : 'CONTRADICTS CLAIM');
 
   const inner = (
     <div className={`bento-card border-l-4 ${accent} p-5 group`}>
@@ -180,7 +188,7 @@ export function ResultsDisplay({ result }: { result: VerificationResult }) {
       </motion.div>
 
       {/* ── Desktop two-column / Mobile single-column ─────────────────────── */}
-      <div className="flex flex-col xl:flex-row xl:items-start gap-5">
+      <div className="flex flex-col xl:flex-row xl:items-start gap-5 xl:gap-8">
 
         {/* ── LEFT: Primary Report ─────────────────────────────────────────── */}
         <div className="flex-1 min-w-0">
@@ -324,7 +332,7 @@ export function ResultsDisplay({ result }: { result: VerificationResult }) {
         </div>
 
         {/* ── RIGHT: Secondary Sidebar (xl+ desktop only) ──────────────────── */}
-        <aside className="hidden xl:flex xl:flex-col gap-5 xl:w-[360px] 2xl:w-[400px] flex-shrink-0">
+        <aside className="hidden xl:flex xl:flex-col gap-5 flex-1 min-w-[340px] max-w-[520px] flex-shrink-0">
           <div className="sticky top-28 flex flex-col gap-5">
 
             {hasKB && (

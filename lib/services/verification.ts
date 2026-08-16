@@ -1,7 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
 import { searchPinecone } from './pinecone';
 import { checkGoogleFactCheckAPI } from './googleFactCheck';
-import { searchWeb, WebSearchResult } from './webSearch';
+import { searchWeb } from './webSearch';
+import { analyzeClaim } from './claimAnalysis';
 import {
   VerificationResult,
   Source,
@@ -11,94 +12,56 @@ import {
 
 const ai = process.env.GEMINI_API_KEY
   ? new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-  })
+      apiKey: process.env.GEMINI_API_KEY,
+    })
   : null;
 
 function generatePrompt(
   query: string,
   sources: Source[],
   factCheckResults: ExternalFactCheck[],
-  webResults: WebSearchResult[],
   isInitial: boolean = false
 ) {
   return `You are the core evidence-analysis engine for VNews Lab, an AI news verification platform.
 
-Your job is to determine whether the user's CLAIM is supported, contradicted, mixed, or not sufficiently supported by the provided evidence.
+Your job is to determine whether the user's CLAIM is supported, contradicted, mixed, or not sufficiently supported by the provided QUALIFIED evidence.
 
 USER CLAIM:
 "${query}"
 
-RETRIEVED EVIDENCE:
+QUALIFIED EVIDENCE:
 ${JSON.stringify(sources, null, 2)}
 
 GOOGLE FACT CHECK RESULTS:
 ${JSON.stringify(factCheckResults, null, 2)}
 
-LIVE NEWS SEARCH RESULTS:
-${JSON.stringify(webResults, null, 2)}
-
 IMPORTANT EVIDENCE RULES:
 
 1. ONLY use the provided evidence. Do not rely on your own world knowledge.
 
-2. Relevance is critical.
-   A retrieved document or fact-check is NOT evidence merely because it contains similar words, people, countries, organizations, or entities.
-
-3. Distinguish between:
-   - an EXACT claim matching the user's claim,
-   - a closely related claim,
-   - and a merely topical or semantic match.
-
-4. A Google Fact Check result reviews a particular claim. Its rating applies to THAT reviewed claim.
-   Do NOT automatically treat the rating as proof of the user's broader claim.
-
+2. A Google Fact Check result reviews a particular claim. Its rating applies to THAT reviewed claim.
+   Do NOT automatically treat the rating as absolute proof of the user's broader claim.
    Example:
-
-   User claim:
-   "Person X is dead."
-
-   Fact check:
-   "A video falsely claims that Person X was killed."
-
+   User claim: "Person X is dead."
+   Fact check: "A video falsely claims that Person X was killed."
    The fact check being FALSE means the video claim was false.
    It does NOT automatically prove that Person X is alive.
 
-5. Likewise, a fact check saying that a video shows a person dismissing death rumors does not automatically prove the person's current status.
+3. Consider publication and review dates when they are available.
+   For time-sensitive claims, newer relevant evidence supersedes older evidence.
 
-6. Consider publication and review dates when they are available.
-   For time-sensitive claims, newer relevant evidence can supersede older evidence.
-   Do not treat an old fact check as proof of the current state of the world.
-
-7. Pinecone retrieval and reranking scores represent relevance, not truth.
-   A high retrieval score does not automatically mean that a source supports the claim.
-
-8. If evidence is weak, unrelated, contradictory, outdated, or insufficient to establish the claim, return:
+4. If evidence is weak, unrelated, contradictory, outdated, or insufficient to establish the claim, return:
    "INSUFFICIENT EVIDENCE"
 
-9. Do NOT manufacture certainty.
+5. Do NOT manufacture certainty.
    Only return TRUE or FALSE when the provided evidence actually establishes the claim or its contradiction.
 
-10. MIXED should only be used when the provided evidence contains meaningful and relevant support for BOTH sides of the user's claim.
-
-11. Confidence must represent the strength of the QUALIFIED evidence supporting the final verdict, not merely the number of retrieved results.
-
-12. LIVE NEWS RELEVANCE IS STRICT.
-   A live news result is evidence ONLY when its title or snippet directly addresses the specific user claim.
-   Do NOT treat an article as evidence merely because it mentions the same person, country, organization, conflict, or topic.
-   Search-result quantity NEVER determines the verdict.
-   For example, articles about Iran, Trump, war, sanctions, or Khamenei's politics are NOT evidence that Khamenei is alive or dead unless they directly address his current status.
-   A directly relevant report confirming death may support the claim.
-   A directly relevant report confirming life or denying the death claim may contradict it.
-   If live news is merely topical or inconclusive, ignore it for verdict purposes.
-
-13. MIXED is allowed ONLY when there is meaningful, direct, relevant evidence on BOTH sides.
-   Do not use MIXED because evidence is merely related, inconclusive, old, or contradictory in wording.
+6. MIXED should only be used when the provided evidence contains meaningful and relevant support for BOTH sides of the user's claim.
 
 ${isInitial
-      ? `14. This is an INITIAL RAPID PASS.
+      ? `7. This is an INITIAL RAPID PASS.
 The evidence may be incomplete. Treat the result as provisional and be conservative.`
-      : `14. This is the FINAL ANALYSIS.
+      : `7. This is the FINAL ANALYSIS.
 Use all relevant evidence provided, but ignore evidence that does not actually address the user's claim.`
     }
 
@@ -106,20 +69,16 @@ Return ONLY a strict JSON object using exactly this structure:
 
 {
   "verdict": "TRUE" | "FALSE" | "MIXED" | "INSUFFICIENT EVIDENCE",
-  "confidence": number,
   "analysis": "concise journalistic explanation",
   "supportingEvidenceIds": ["id1", "id2"],
   "contradictingEvidenceIds": ["id3"]
 }
 
 Additional requirements:
-
-- confidence must be between 0.0 and 1.0.
-- supportingEvidenceIds may ONLY contain IDs from RETRIEVED EVIDENCE.
-- contradictingEvidenceIds may ONLY contain IDs from RETRIEVED EVIDENCE.
+- supportingEvidenceIds may ONLY contain IDs from QUALIFIED EVIDENCE.
+- contradictingEvidenceIds may ONLY contain IDs from QUALIFIED EVIDENCE.
 - Never invent evidence IDs.
 - Do not put Google Fact Check IDs into those arrays.
-- Live news evidence IDs are valid evidence IDs.
 - If no retrieved evidence is directly relevant, return empty arrays.
 `;
 }
@@ -129,7 +88,9 @@ function createInsufficientResult(
   query: string,
   factCheckResults: ExternalFactCheck[],
   timestamp: number,
-  analysis: string
+  analysis: string,
+  status: string = 'SUCCESS',
+  metadata: any = {}
 ): VerificationResult {
   return {
     id: verificationId,
@@ -142,533 +103,285 @@ function createInsufficientResult(
     externalFactChecks: factCheckResults,
     isProvisional: true,
     timestamp,
+    status,
+    metadata
   };
+}
+
+function calculateSystemConfidence(
+  supporting: Source[],
+  contradicting: Source[],
+  factChecks: ExternalFactCheck[]
+): number {
+  // Base calculation without relying on LLM self-confidence
+  let confidence = 0;
+  
+  const strongSupporting = supporting.filter(s => s.relevance === 'DIRECT').length;
+  const strongContradicting = contradicting.filter(s => s.relevance === 'DIRECT').length;
+
+  // Simple heuristic
+  if (strongSupporting > 0 && strongContradicting === 0) {
+    confidence = Math.min(1.0, 0.70 + (strongSupporting * 0.10) + (factChecks.length * 0.05));
+  } else if (strongContradicting > 0 && strongSupporting === 0) {
+    confidence = Math.min(1.0, 0.70 + (strongContradicting * 0.10) + (factChecks.length * 0.05));
+  } else if (strongSupporting > 0 && strongContradicting > 0) {
+    // Mixed
+    confidence = Math.min(0.9, 0.50 + ((strongSupporting + strongContradicting) * 0.05));
+  } else if (supporting.length > 0 || contradicting.length > 0) {
+    // Only related/topical evidence
+    confidence = 0.3;
+  }
+  
+  return confidence;
 }
 
 export async function runProgressiveVerification(
   query: string,
   emit: (event: string, data: any) => void
 ): Promise<void> {
-  const timestamp = Date.now();
+  const startTime = Date.now();
+  const timestamp = startTime;
   const verificationId = `vnl-${timestamp}`;
 
-  emit('status', {
-    message: 'Checking fast available evidence...',
-  });
+  emit('verification_started', { verificationId, query });
 
-  /*
-   * Start both retrieval paths in parallel.
-   *
-   * Google Fact Check:
-   *     rapid external evidence
-   *
-   * Pinecone:
-   *     deeper local knowledge-base retrieval
-   *
-   * IMPORTANT:
-   * Pinecone now receives the CLAIM TEXT directly.
-   * Pinecone's integrated embedding model handles
-   * query embedding internally.
-   */
+  emit('status', { message: 'Analyzing claim intent...' });
+  const claimContext = await analyzeClaim(query);
+  emit('claim_analysis_completed', claimContext);
+
+  emit('status', { message: 'Retrieving evidence sources...' });
+
   const factCheckPromise = checkGoogleFactCheckAPI(query);
-
-  const pineconePromise = searchPinecone(query, 5);
-
-  const webSearchPromise = searchWeb(query);
-
-  /*
-   * ---------------------------------------------------------
-   * FAST PASS
-   * ---------------------------------------------------------
-   */
+  const pineconePromise = searchPinecone(query, 8); // Deep search
+  const webSearchPromise = searchWeb(claimContext);
 
   const retrievalStart = Date.now();
 
-  const [factCheckResults, webResults] = await Promise.all([
-    factCheckPromise,
-    webSearchPromise,
-  ]);
-
-  console.log(
-    `Retrieval completed in ${Date.now() - retrievalStart}ms`,
-    {
-      factChecks: factCheckResults.length,
-      webResults: webResults.length,
-    }
-  );
-
+  // Fast Pass: Fact Checks
+  const factCheckResults = await factCheckPromise;
+  
   let initialResult: VerificationResult;
-
   if (factCheckResults.length > 0 && ai) {
-    emit('status', {
-      message: 'Analyzing initial evidence...',
-    });
-
-    const prompt = generatePrompt(
-      query,
-      [],
-      factCheckResults,
-      webResults,
-      true
-    );
-
+    emit('status', { message: 'Analyzing initial fact checks...' });
+    const prompt = generatePrompt(query, [], factCheckResults, true);
+    
     try {
-      console.log('Starting Gemma initial analysis...');
-      const initialGemmaStart = Date.now();
-
       const response = await ai.models.generateContent({
         model: 'gemma-4-31b-it',
         contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-        },
+        config: { responseMimeType: 'application/json' },
       });
-
-      console.log(
-        `Gemma initial analysis completed in ${Date.now() - initialGemmaStart}ms.`
-      );
-      const llmResult = JSON.parse(
-        response.text || '{}'
-      );
-
-      const verdict: VerificationVerdict =
-        llmResult.verdict === 'TRUE' ||
-          llmResult.verdict === 'FALSE' ||
-          llmResult.verdict === 'MIXED' ||
-          llmResult.verdict === 'INSUFFICIENT EVIDENCE'
-          ? llmResult.verdict
-          : 'INSUFFICIENT EVIDENCE';
-
-      const confidence =
-        typeof llmResult.confidence === 'number'
-          ? Math.min(
-            Math.max(llmResult.confidence, 0),
-            1
-          )
-          : 0;
+      const llmResult = JSON.parse(response.text || '{}');
+      const verdict = llmResult.verdict || 'INSUFFICIENT EVIDENCE';
 
       initialResult = {
         id: verificationId,
         claim: query,
         verdict,
-        confidence,
-        analysis:
-          typeof llmResult.analysis === 'string'
-            ? llmResult.analysis
-            : 'Initial evidence analysis complete.',
+        confidence: factCheckResults.length > 0 ? 0.6 : 0,
+        analysis: llmResult.analysis || 'Initial fact-check analysis.',
         supportingEvidence: [],
         contradictingEvidence: [],
         externalFactChecks: factCheckResults,
         isProvisional: true,
         timestamp,
+        status: 'SUCCESS'
       };
-    } catch (error) {
-      console.error(
-        'Initial evidence analysis failed:',
-        error
-      );
-
-      initialResult = createInsufficientResult(
-        verificationId,
-        query,
-        factCheckResults,
-        timestamp,
-        'Initial evidence analysis could not be completed. Awaiting deeper evidence retrieval.'
-      );
+    } catch (e) {
+      initialResult = createInsufficientResult(verificationId, query, factCheckResults, timestamp, 'Initial analysis failed.');
     }
   } else {
-    initialResult = createInsufficientResult(
-      verificationId,
-      query,
-      factCheckResults,
-      timestamp,
-      factCheckResults.length > 0
-        ? 'Related fact-check results were found, but they require deeper evidence analysis.'
-        : 'No external fact-check evidence was found. Awaiting deeper knowledge-base retrieval.'
-    );
+    initialResult = createInsufficientResult(verificationId, query, factCheckResults, timestamp, 'Awaiting deep evidence retrieval.');
   }
 
-  /*
-   * Emit the provisional result.
-   */
   emit('initial_result', initialResult);
 
-  /*
-   * ---------------------------------------------------------
-   * DEEP PASS
-   * ---------------------------------------------------------
-   */
-
-  emit('status', {
-    message: 'Enriching evidence from Knowledge Base...',
+  // Deep Pass: Web and Knowledge Base
+  emit('status', { message: 'Deep evidence retrieval in progress...' });
+  
+  const [pineconeRes, webRes] = await Promise.all([pineconePromise, webSearchPromise]);
+  emit('news_search_completed', { 
+    count: webRes.results.length, 
+    status: webRes.status,
+    durationMs: Date.now() - retrievalStart 
+  });
+  
+  emit('knowledge_search_completed', { 
+    count: pineconeRes.results.length, 
+    status: pineconeRes.status,
+    durationMs: Date.now() - retrievalStart 
   });
 
-  let pineconeResults;
-
-  try {
-    pineconeResults = await pineconePromise;
-  } catch (error) {
-    console.error(
-      'Knowledge Base retrieval failed:',
-      error
-    );
-
-    emit('status', {
-      message:
-        'Knowledge Base retrieval failed. Finalizing with available evidence...',
-    });
-
-    /*
-     * Retrieval failure is NOT evidence.
-     */
+  const hasInfrastructureError = pineconeRes.status === 'ERROR' && webRes.status === 'ERROR';
+  
+  if (hasInfrastructureError) {
+    emit('status', { message: 'System infrastructure error.' });
     emit('final_result', {
       ...initialResult,
-      verdict: 'INSUFFICIENT EVIDENCE',
+      verdict: 'SYSTEM ERROR',
       confidence: 0,
-      analysis:
-        'The knowledge base could not be queried, so there is insufficient evidence to make a definitive determination.',
-      supportingEvidence: [],
-      contradictingEvidence: [],
+      analysis: 'Verification infrastructure failed or is temporarily unavailable. Could not retrieve evidence securely.',
       isProvisional: false,
+      status: 'ERROR'
     });
-
     return;
   }
 
-  const sources: Source[] = pineconeResults.map(
-    (result) => ({
-      id: result.id,
+  const sources: Source[] = pineconeRes.results.map((result) => ({
+    id: result.id,
+    title: result.metadata.title as string || 'Document Extract',
+    snippet: result.text,
+    url: result.metadata.url as string || undefined,
+    publicationDate: result.metadata.date as string || undefined,
+    retrievalScore: result.score,
+    relevance: 'RELATED', // Base assumption for Pinecone matches above threshold
+    metadata: { origin: 'knowledge-base', type: result.metadata.type }
+  }));
 
-      title:
-        (result.metadata.title as string) ||
-        'Document Extract',
-
-      snippet: result.text,
-
-      url:
-        (result.metadata.url as string) ||
-        undefined,
-
-      publicationDate:
-        (result.metadata.date as string) ||
-        undefined,
-
-      retrievalScore: result.score,
-    })
-  );
-
-  // Convert NewsAPI results into the same Source shape used by the
-  // Results tab. These can now be cited by the final analysis.
-  const webSources: Source[] = webResults.map((result, index) => ({
+  const webSources: Source[] = webRes.results.map((result, index) => ({
     id: `web-${index}`,
     title: result.title,
     snippet: result.snippet,
     url: result.url,
     publicationDate: result.publishedDate,
-    metadata: {
-      origin: 'live-news',
-      source: result.source || '',
-    },
+    relevance: result.relevance,
+    metadata: { origin: 'live-news', source: result.source || '' },
   }));
 
-  // Pinecone + live news are one evidence pool for final reasoning.
-  const retrievedSources: Source[] = [
-    ...sources,
-    ...webSources,
-  ];
+  const retrievedSources: Source[] = [...sources, ...webSources];
+  const qualifiedEvidence = retrievedSources.filter(s => s.relevance === 'DIRECT' || s.relevance === 'RELATED');
 
-  /*
-   * ---------------------------------------------------------
-   * NO QUALIFYING LOCAL EVIDENCE
-   * ---------------------------------------------------------
-   */
+  emit('evidence_qualified', { qualifiedCount: qualifiedEvidence.length });
 
-  if (retrievedSources.length === 0) {
-    emit('status', {
-      message:
-        'No sufficiently relevant retrieved evidence found. Performing final evidence assessment...',
+  if (qualifiedEvidence.length === 0) {
+    emit('status', { message: 'No qualifying evidence found.' });
+    
+    // No evidence, but not an error.
+    emit('final_result', {
+      ...initialResult,
+      verdict: 'INSUFFICIENT EVIDENCE',
+      confidence: 0,
+      analysis: 'No directly relevant or strongly related evidence was found to evaluate the claim definitively.',
+      isProvisional: false,
+      status: 'SUCCESS',
+      metadata: { sourcesChecked: retrievedSources.length, sourcesQualified: 0, durationMs: Date.now() - startTime }
     });
-
-    if (!ai) {
-      emit('final_result', {
-        ...initialResult,
-        verdict: 'INSUFFICIENT EVIDENCE',
-        confidence: 0,
-        analysis:
-          'No sufficiently relevant retrieved evidence was found, so the available evidence is insufficient for a definitive verdict.',
-        supportingEvidence: [],
-        contradictingEvidence: [],
-        isProvisional: false,
-      });
-
-      return;
-    }
-
-    try {
-      const finalPrompt = generatePrompt(
-        query,
-        [],
-        factCheckResults,
-        webResults,
-        true
-      )
-
-      console.log('Starting Gemma final analysis (no local evidence)...');
-      const finalGemmaStart = Date.now();
-
-      const response =
-        await ai.models.generateContent({
-          model: 'gemma-4-31b-it',
-          contents: finalPrompt,
-          config: {
-            responseMimeType: 'application/json',
-          },
-        });
-
-      console.log(
-        `Gemma final analysis (no local evidence) completed in ${Date.now() - finalGemmaStart}ms.`
-      );
-
-      const llmResult = JSON.parse(
-        response.text || '{}'
-      );
-
-      const verdict: VerificationVerdict =
-        llmResult.verdict === 'TRUE' ||
-          llmResult.verdict === 'FALSE' ||
-          llmResult.verdict === 'MIXED' ||
-          llmResult.verdict === 'INSUFFICIENT EVIDENCE'
-          ? llmResult.verdict
-          : 'INSUFFICIENT EVIDENCE';
-
-      const confidence =
-        typeof llmResult.confidence === 'number'
-          ? Math.min(
-            Math.max(llmResult.confidence, 0),
-            1
-          )
-          : 0;
-
-      /*
-       * There is no qualifying local evidence.
-       *
-       * Therefore local supporting/contradicting arrays
-       * MUST remain empty.
-       */
-      const finalResult: VerificationResult = {
-        id: verificationId,
-        claim: query,
-        verdict,
-        confidence,
-        analysis:
-          typeof llmResult.analysis === 'string'
-            ? llmResult.analysis
-            : 'Final evidence assessment complete.',
-        supportingEvidence: [],
-        contradictingEvidence: [],
-        externalFactChecks: factCheckResults,
-        isProvisional: false,
-        timestamp,
-      };
-
-      emit('final_result', finalResult);
-    } catch (error) {
-      console.error(
-        'Final assessment without local evidence failed:',
-        error
-      );
-
-      emit('final_result', {
-        ...initialResult,
-        verdict: 'INSUFFICIENT EVIDENCE',
-        confidence: 0,
-        analysis:
-          'The available evidence could not be reliably analyzed. No sufficiently relevant retrieved evidence was found.',
-        supportingEvidence: [],
-        contradictingEvidence: [],
-        isProvisional: false,
-      });
-    }
-
     return;
   }
 
-  /*
-   * ---------------------------------------------------------
-   * FINAL DEEP ANALYSIS
-   * ---------------------------------------------------------
-   */
-
-  emit('status', {
-    message:
-      'Re-evaluating with qualified Knowledge Base evidence...',
-  });
+  emit('status', { message: 'Performing final deep analysis...' });
 
   if (ai) {
     try {
-      const prompt = generatePrompt(
-        query,
-        retrievedSources,
-        factCheckResults,
-        webResults,
-        false
-      );
+      const prompt = generatePrompt(query, qualifiedEvidence, factCheckResults, false);
+      const response = await ai.models.generateContent({
+        model: 'gemma-4-31b-it',
+        contents: prompt,
+        config: { responseMimeType: 'application/json' },
+      });
 
-      console.log('Starting Gemma final deep analysis...');
-      const finalDeepGemmaStart = Date.now();
+      const llmResult = JSON.parse(response.text || '{}');
+      const rawVerdict = llmResult.verdict || 'INSUFFICIENT EVIDENCE';
+      
+      const supportingIds = Array.isArray(llmResult.supportingEvidenceIds) ? llmResult.supportingEvidenceIds : [];
+      const contradictingIds = Array.isArray(llmResult.contradictingEvidenceIds) ? llmResult.contradictingEvidenceIds : [];
 
-      const response =
-        await ai.models.generateContent({
-          model: 'gemma-4-31b-it',
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-          },
-        });
+      // Validate that every evidence ID returned by the AI actually exists in the retrieved evidence set.
+      const retrievedSourceIds = new Set(retrievedSources.map((s) => s.id));
+      const validSupportingIds = supportingIds.filter((id: string) => {
+        const exists = retrievedSourceIds.has(id);
+        if (!exists) {
+          console.warn(`AI returned invalid supporting evidence ID: ${id}`);
+        }
+        return exists;
+      });
+      const validContradictingIds = contradictingIds.filter((id: string) => {
+        const exists = retrievedSourceIds.has(id);
+        if (!exists) {
+          console.warn(`AI returned invalid contradicting evidence ID: ${id}`);
+        }
+        return exists;
+      });
 
-      console.log(
-        `Gemma final deep analysis completed in ${Date.now() - finalDeepGemmaStart}ms.`
-      );
+      const supportingEvidence = qualifiedEvidence.filter((source) => validSupportingIds.includes(source.id));
+      const contradictingEvidence = qualifiedEvidence.filter((source) => validContradictingIds.includes(source.id));
 
-      const llmResult = JSON.parse(
-        response.text || '{}'
-      );
+      // Guardrail: Calculate normalizedVerdict based on evidence rules
+      let normalizedVerdict: VerificationVerdict = 'INSUFFICIENT EVIDENCE';
 
-      const verdict: VerificationVerdict =
-        llmResult.verdict === 'TRUE' ||
-          llmResult.verdict === 'FALSE' ||
-          llmResult.verdict === 'MIXED' ||
-          llmResult.verdict === 'INSUFFICIENT EVIDENCE'
-          ? llmResult.verdict
-          : 'INSUFFICIENT EVIDENCE';
+      const hasSupport = supportingEvidence.length > 0;
+      const hasContradict = contradictingEvidence.length > 0;
 
-      const confidence =
-        typeof llmResult.confidence === 'number'
-          ? Math.min(
-            Math.max(llmResult.confidence, 0),
-            1
-          )
-          : 0;
+      if (rawVerdict === 'INSUFFICIENT EVIDENCE') {
+        normalizedVerdict = 'INSUFFICIENT EVIDENCE';
+        supportingEvidence.length = 0;
+        contradictingEvidence.length = 0;
+      } else if (hasSupport && hasContradict) {
+        normalizedVerdict = 'MIXED';
+      } else if (hasSupport) {
+        normalizedVerdict = 'TRUE';
+      } else if (hasContradict) {
+        normalizedVerdict = 'FALSE';
+      } else {
+        normalizedVerdict = 'INSUFFICIENT EVIDENCE';
+      }
 
-      const supportingIds =
-        Array.isArray(
-          llmResult.supportingEvidenceIds
-        )
-          ? llmResult.supportingEvidenceIds
-          : [];
-
-      const contradictingIds =
-        Array.isArray(
-          llmResult.contradictingEvidenceIds
-        )
-          ? llmResult.contradictingEvidenceIds
-          : [];
-
-      /*
-       * Only allow IDs that actually exist in the
-       * retrieved source set.
-       */
-      const supportingEvidence =
-        retrievedSources.filter((source) =>
-          supportingIds.includes(source.id)
-        );
-
-      const contradictingEvidence =
-        retrievedSources.filter((source) =>
-          contradictingIds.includes(source.id)
-        );
-
-      // Guardrail: MIXED requires actual evidence selected on both sides.
-      // Never allow a model to return MIXED when it did not identify
-      // meaningful supporting and contradicting evidence.
-      const normalizedVerdict: VerificationVerdict =
-        verdict === 'MIXED' &&
-          (
-            supportingEvidence.length === 0 ||
-            contradictingEvidence.length === 0
-          )
-          ? 'INSUFFICIENT EVIDENCE'
-          : verdict;
+      // Calculate confidence using system rules
+      const finalConfidence = calculateSystemConfidence(supportingEvidence, contradictingEvidence, factCheckResults);
 
       const finalResult: VerificationResult = {
         id: verificationId,
         claim: query,
-        verdict,
-        confidence,
-        analysis:
-          typeof llmResult.analysis === 'string'
-            ? llmResult.analysis
-            : 'Comprehensive evidence analysis complete.',
+        verdict: normalizedVerdict,
+        confidence: finalConfidence,
+        analysis: llmResult.analysis || 'Comprehensive evidence analysis complete.',
         supportingEvidence,
         contradictingEvidence,
         externalFactChecks: factCheckResults,
         isProvisional: false,
         timestamp,
+        status: 'SUCCESS',
+        metadata: {
+          sourcesChecked: retrievedSources.length,
+          sourcesQualified: qualifiedEvidence.length,
+          durationMs: Date.now() - startTime
+        }
       };
 
+      emit('analysis_completed', { verdict: normalizedVerdict, confidence: finalConfidence });
       emit('final_result', finalResult);
     } catch (error) {
-      console.error(
-        'Final evaluation failed:',
-        error
-      );
-
-      /*
-       * Never pretend the provisional result is definitive.
-       */
+      console.error('Final evaluation failed:', error);
       emit('final_result', {
         ...initialResult,
-        verdict: 'INSUFFICIENT EVIDENCE',
+        verdict: 'SYSTEM ERROR',
         confidence: 0,
-        analysis:
-          'Final evidence analysis failed, so a definitive verdict cannot be established.',
-        supportingEvidence: [],
-        contradictingEvidence: [],
+        analysis: 'Final evidence analysis failed due to an AI processing error.',
         isProvisional: false,
+        status: 'ERROR'
       });
     }
   } else {
-    /*
-     * No Gemini API key means we cannot perform actual
-     * evidence reasoning.
-     *
-     * Never create a fake verdict.
-     */
     emit('final_result', {
       ...initialResult,
-      verdict: 'INSUFFICIENT EVIDENCE',
+      verdict: 'SYSTEM ERROR',
       confidence: 0,
-      analysis:
-        'The AI analysis engine is unavailable, so the available evidence cannot be reliably evaluated.',
-      supportingEvidence: [],
-      contradictingEvidence: [],
+      analysis: 'The AI analysis engine is unavailable.',
       isProvisional: false,
+      status: 'ERROR'
     });
   }
 }
 
-/*
- * Backward-compatible synchronous-style wrapper.
- */
-export async function runVerification(
-  query: string
-): Promise<VerificationResult> {
+export async function runVerification(query: string): Promise<VerificationResult> {
   let result: VerificationResult | null = null;
-
-  await runProgressiveVerification(
-    query,
-    (event, data) => {
-      if (event === 'final_result') {
-        result = data;
-      }
+  await runProgressiveVerification(query, (event, data) => {
+    if (event === 'final_result') {
+      result = data;
     }
-  );
-
+  });
   if (!result) {
-    throw new Error(
-      'Failed to generate verification result'
-    );
+    throw new Error('Failed to generate verification result');
   }
-
   return result;
 }

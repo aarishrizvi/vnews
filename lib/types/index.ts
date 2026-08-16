@@ -1,5 +1,13 @@
-export type VerificationVerdict = 'TRUE' | 'FALSE' | 'MIXED' | 'INSUFFICIENT EVIDENCE';
+export type VerificationVerdict = 'TRUE' | 'FALSE' | 'MIXED' | 'INSUFFICIENT EVIDENCE' | 'SYSTEM ERROR';
+export type RetrievalStatus = 'SUCCESS' | 'EMPTY' | 'ERROR';
 
+export interface ClaimContext {
+  subject: string;
+  event: string;
+  location?: string;
+  temporalContext?: string;
+  claimType?: string;
+}
 export interface Source {
   id: string;
   title?: string;
@@ -8,6 +16,9 @@ export interface Source {
   publicationDate?: string;
   author?: string;
   retrievalScore?: number;
+  relevance?: 'DIRECT' | 'RELATED' | 'TOPICAL' | 'IRRELEVANT';
+  sourceQuality?: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+  corroborationScore?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
 }
@@ -45,6 +56,13 @@ export interface VerificationResult {
   sourceOrigin?: SourceOrigin;
   isProvisional?: boolean;
   timestamp: number;
+  status?: string;
+  metadata?: {
+    sourcesChecked?: number;
+    sourcesQualified?: number;
+    independentSources?: number;
+    durationMs?: number;
+  };
 }
 
 export interface SearchRecord {

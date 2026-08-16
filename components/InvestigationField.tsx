@@ -41,6 +41,10 @@ export function InvestigationField() {
       '(prefers-reduced-motion: reduce)'
     ).matches;
 
+    if (reducedMotion) {
+      return;
+    }
+
     let width = 0;
     let height = 0;
 

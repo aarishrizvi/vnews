@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/firebase/serverAuth';
 import { insertDocumentChunks } from '@/lib/services/pinecone';
+import crypto from 'crypto';
 
 // --- Text Chunking ---
 function chunkText(
@@ -30,11 +31,10 @@ function chunkText(
 }
 
 // --- Deterministic Document ID ---
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .slice(0, 64);
+function generateDocumentId(title: string, url: string, date: string): string {
+  const data = `${title}|${url}|${date}`;
+  const hash = crypto.createHash('sha256').update(data).digest('hex').substring(0, 16);
+  return `doc-${hash}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -90,8 +90,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 4. Generate deterministic document ID
-  const documentId =
-    `doc-${slugify(title)}-${slugify(date || 'undated')}`;
+  const documentId = generateDocumentId(title, url || '', date || '');
 
   // 5. Chunk article
   const chunks = chunkText(text);

@@ -145,7 +145,7 @@ body {
   /* ── Layout ───────────────────────────────── */
 
   .site-container {
-    @apply w-full max-w-screen-2xl mx-auto px-5 md:px-10 xl:px-16;
+    @apply w-full max-w-6xl mx-auto px-5 md:px-10 xl:px-16;
   }
 
   /* ── Glass Surfaces ───────────────────────── */

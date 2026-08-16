@@ -107,7 +107,7 @@ function SearchResultsContent() {
     <>
 
 
-      <div className="relative z-10 site-container py-10">
+      <div className="relative z-10 w-full px-4 sm:px-6 xl:px-8 py-10">
         <AnimatePresence mode="wait">
           {(stage === 'loading_stages' || stage === 'fetching') && (
             <motion.div
@@ -133,7 +133,7 @@ function SearchResultsContent() {
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-              className="w-full flex flex-col items-center"
+              className="w-full flex flex-col"
             >
               <ResultsDisplay result={result} />
 

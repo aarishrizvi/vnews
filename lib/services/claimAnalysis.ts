@@ -1,56 +1,109 @@
 import { GoogleGenAI } from '@google/genai';
 import { ClaimContext } from '../types';
 
+export interface AnalyzedClaimContext extends ClaimContext {
+  searchQueries?: string[];
+  isVerifiableClaim?: boolean;
+  claimType?: string;
+}
+
 const ai = process.env.GEMINI_API_KEY
-  ? new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-    })
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
   : null;
 
-export async function analyzeClaim(claim: string): Promise<ClaimContext> {
+const MODEL = 'gemma-4-31b-it';
+
+export async function analyzeClaim(
+  claim: string
+): Promise<AnalyzedClaimContext> {
   if (!ai) {
+    console.warn('[ClaimAnalysis] GEMINI_API_KEY missing');
     return {
       subject: claim,
       event: '',
+      searchQueries: [claim],
+      isVerifiableClaim: true,
     };
   }
 
-  const prompt = `You are a claim analysis engine for a news verification platform.
-Analyze the following claim and extract structured information.
+  const prompt = `You are the claim-analysis and search-planning engine for VNews.
 
-Claim: "${claim}"
+Understand the user's factual claim semantically. Do NOT use hard-coded keyword rules.
 
-Extract:
-- subject: The main person, organization, or entity the claim is about.
-- event: The core action or event (e.g., "death", "resignation", "announcement", "arrest").
-- location: The location if mentioned or strongly implied, otherwise omit.
-- temporalContext: E.g., "current", "past", "future", or a specific date.
-- claimType: A short category (e.g., "death", "politics", "conflict", "financial", "health").
+Claim:
+"${claim}"
 
-Return ONLY a strict JSON object with these keys. No markdown wrapping.`;
+Extract the actual proposition and create search queries that would find evidence for or against it.
+
+Important:
+- Preserve exact entities and names.
+- Understand comparisons.
+  Example: "The Moon is larger than Earth" means the proposition is Moon > Earth in size, and BOTH Moon and Earth are essential entities.
+- Understand historical claims.
+  Example: "The 2024 Summer Olympics were held in Paris" means event=2024 Summer Olympics, location=Paris, time=2024.
+- Understand negation.
+  Example: "Chandrayaan-3 did not land on Mars" must preserve the negative proposition.
+- Understand relationships, not just keywords.
+- Search queries should be natural, concise, and evidence-oriented.
+- Create 3 to 5 different queries.
+- Include at least one query that searches for the claim itself.
+- Include at least one query that searches for authoritative confirmation or contradiction.
+- Do not invent facts.
+
+Return ONLY JSON:
+
+{
+  "isVerifiableClaim": true,
+  "subject": "main entity or entities",
+  "event": "core event/action/relationship",
+  "location": "location or null",
+  "temporalContext": "date/year/time period or unknown",
+  "claimType": "category",
+  "searchQueries": [
+    "query 1",
+    "query 2",
+    "query 3"
+  ]
+}`;
 
   try {
+    console.log(`[ClaimAnalysis] Using model: ${MODEL}`);
+
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: MODEL,
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
       },
     });
 
-    const result = JSON.parse(response.text || '{}') as ClaimContext;
+    const result = JSON.parse(response.text?.trim() || '{}');
+
+    const queries = Array.isArray(result.searchQueries)
+      ? result.searchQueries
+          .filter((q: unknown): q is string => typeof q === 'string')
+          .map((q: string) => q.trim())
+          .filter(Boolean)
+          .slice(0, 5)
+      : [];
+
     return {
       subject: result.subject || claim,
       event: result.event || '',
-      location: result.location,
-      temporalContext: result.temporalContext,
-      claimType: result.claimType,
+      location: result.location || undefined,
+      temporalContext: result.temporalContext || undefined,
+      claimType: result.claimType || undefined,
+      searchQueries: queries.length ? queries : [claim],
+      isVerifiableClaim: result.isVerifiableClaim !== false,
     };
   } catch (error) {
-    console.error('Claim analysis failed:', error);
+    console.error('[ClaimAnalysis] Gemma request failed:', error);
+
     return {
       subject: claim,
       event: '',
+      searchQueries: [claim],
+      isVerifiableClaim: true,
     };
   }
 }

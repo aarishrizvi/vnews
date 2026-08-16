@@ -1,46 +1,39 @@
-import { IntentClassification } from '../types';
+import { GoogleGenAI } from '@google/genai';
 
-export interface IntentCheckResult extends IntentClassification {
+export interface IntentCheckResult {
   isValidClaim: boolean;
+  verifiable: boolean;
+  type: string;
+  claim: string;
+  subject?: string;
+  event?: string | null;
+  location?: string | null;
+  temporalContext?: string;
+  message?: string;
 }
 
-const PLAYFUL_REJECTIONS = [
-  "This is not a factual claim that VNews can verify.",
-  "This is not a verifiable fact claim.",
-  "Give me a real claim to verify, not a general question.",
-  "VNews verifies factual claims, not casual conversation.",
-];
+const ai = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  : null;
 
-const AMBIGUOUS_RESPONSES = [
-  "That is too vague to verify as a factual claim.",
-  "Please provide a specific factual claim or event to verify.",
-  "I need a clearer factual statement to investigate.",
-];
+const MODEL = 'gemma-4-31b-it';
 
-function normalizeClaim(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+function fallback(query: string): IntentCheckResult {
+  return {
+    isValidClaim: true,
+    verifiable: true,
+    type: 'FACTUAL_CLAIM',
+    claim: query.trim(),
+    subject: query.trim(),
+    event: null,
+    temporalContext: 'unknown',
+  };
 }
 
-function inferSubject(claim: string): string | undefined {
-  const cleaned = normalizeClaim(claim).replace(/[?!.]+$/, '');
-  const match = cleaned.match(/^(?:is|are|was|were|did|does|do|has|have|will|could|would|should)?\s*(.+?)(?:\s+(?:is|are|was|were|did|does|do|has|have|will|can|could|should|would)\b|$)/i);
-  const candidate = match?.[1]?.trim();
-  if (!candidate) return undefined;
+export async function checkQueryIntent(query: string): Promise<IntentCheckResult> {
+  const cleaned = query.replace(/\s+/g, ' ').trim();
 
-  const lowered = candidate.toLowerCase();
-  if (lowered.includes('modi')) return 'Narendra Modi';
-  if (lowered.includes('khamenei')) return 'Ali Khamenei';
-  if (lowered.includes('ravish')) return 'Ravish Kumar';
-  if (lowered.includes('cjp')) return 'Chief Justice of India';
-
-  return candidate.replace(/^the\s+/i, '').replace(/\s+is\s*$/i, '').trim() || undefined;
-}
-
-export function checkQueryIntent(query: string): IntentCheckResult {
-  const cleaned = normalizeClaim(query);
-  const lowerQuery = cleaned.toLowerCase();
-
-  if (!lowerQuery) {
+  if (!cleaned) {
     return {
       isValidClaim: false,
       verifiable: false,
@@ -50,72 +43,96 @@ export function checkQueryIntent(query: string): IntentCheckResult {
     };
   }
 
-  if (
-    lowerQuery.startsWith('what is my name') ||
-    lowerQuery.startsWith('who are you') ||
-    lowerQuery.startsWith('how are you') ||
-    lowerQuery.startsWith('tell me a joke') ||
-    lowerQuery.startsWith('write me a poem') ||
-    lowerQuery.startsWith('write a poem') ||
-    lowerQuery.startsWith('hi ') ||
-    lowerQuery === 'hi' ||
-    lowerQuery === 'hello'
-  ) {
+  if (!ai) {
+    console.warn('[Intent] GEMINI_API_KEY missing; using safe fallback');
+    return fallback(cleaned);
+  }
+
+  const prompt = `You are the intent and claim-understanding engine for VNews.
+
+Your job is to understand what the user actually typed. Do NOT use keyword rules.
+
+Classify the input into one of these:
+- GREETING
+- PERSONAL_QUESTION
+- CASUAL_CONVERSATION
+- WRITING_REQUEST
+- GENERAL_QUESTION
+- FACTUAL_CLAIM
+- AMBIGUOUS
+- NOT_VERIFIABLE
+
+A factual claim is something whose truth can be checked against evidence from the web, fact-check databases, or a knowledge base.
+
+Examples:
+"hello" -> GREETING
+"hi" -> GREETING
+"what is my name?" -> PERSONAL_QUESTION
+"how are you?" -> CASUAL_CONVERSATION
+"write me a poem" -> WRITING_REQUEST
+"what is photosynthesis?" -> GENERAL_QUESTION
+"the Moon is larger than Earth" -> FACTUAL_CLAIM
+"Chandrayaan-3 landed on Mars" -> FACTUAL_CLAIM
+"Ravish Kumar joined AAP" -> FACTUAL_CLAIM
+
+For FACTUAL_CLAIM:
+- isValidClaim = true
+- verifiable = true
+- extract subject, event, location, temporalContext
+- claimType should describe the claim category
+- preserve names, dates, locations, and comparison targets
+- do not invent facts
+
+For non-verifiable inputs:
+- isValidClaim = false
+- verifiable = false
+- give a short useful message
+- do not send the input to evidence retrieval
+
+Return ONLY JSON:
+
+{
+  "isValidClaim": boolean,
+  "verifiable": boolean,
+  "type": "string",
+  "claim": "string",
+  "subject": "string",
+  "event": "string or null",
+  "location": "string or null",
+  "temporalContext": "string",
+  "claimType": "string",
+  "message": "string or null"
+}
+
+User input:
+"${cleaned}"`;
+
+  try {
+    console.log(`[Intent] Using model: ${MODEL}`);
+
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const result = JSON.parse(response.text?.trim() || '{}');
+
     return {
-      isValidClaim: false,
-      verifiable: false,
-      type: 'NOT_VERIFIABLE',
-      claim: cleaned,
-      message: PLAYFUL_REJECTIONS[Math.floor(Math.random() * PLAYFUL_REJECTIONS.length)],
+      isValidClaim: Boolean(result.isValidClaim),
+      verifiable: Boolean(result.verifiable),
+      type: result.type || 'AMBIGUOUS',
+      claim: result.claim || cleaned,
+      subject: result.subject || undefined,
+      event: result.event ?? null,
+      location: result.location ?? null,
+      temporalContext: result.temporalContext || 'unknown',
+      message: result.message || undefined,
     };
+  } catch (error) {
+    console.error('[Intent] Gemma request failed:', error);
+    return fallback(cleaned);
   }
-
-  if (lowerQuery.length < 12) {
-    return {
-      isValidClaim: false,
-      verifiable: false,
-      type: 'NOT_VERIFIABLE',
-      claim: cleaned,
-      message: AMBIGUOUS_RESPONSES[Math.floor(Math.random() * AMBIGUOUS_RESPONSES.length)],
-    };
-  }
-
-  const subject = inferSubject(cleaned) || cleaned;
-  let type: IntentCheckResult['type'] = 'CURRENT_STATUS';
-  let event: string | null = null;
-  let location: string | null = null;
-  let temporalContext = 'current';
-
-  if (/(?:is|was|are|were)\s+(?:dead|deceased|died|passed away)/i.test(cleaned) || /(?:died|dead|passed away|killed|murdered)/i.test(cleaned)) {
-    type = 'DEATH';
-    event = 'death';
-    temporalContext = 'current';
-  } else if (/(criticizing|accusing|alleging|blaming|condemning|protesting|complaining|railing against|targeting)/i.test(cleaned)) {
-    type = 'POLITICAL_NEWS_CLAIM';
-    event = 'political criticism';
-    if (/jharkhand|delhi|india| parliament|court|cjp|modi/i.test(cleaned)) {
-      location = /jharkhand/i.test(cleaned) ? 'Jharkhand' : /india/i.test(cleaned) ? 'India' : null;
-    }
-  } else if (/(is|are|was|were)\s+(?:the\s+)?(prime minister|chief minister|president|minister|leader|governor)/i.test(cleaned) || /(?:prime minister|president|government|minister)/i.test(cleaned)) {
-    type = 'CURRENT_STATUS';
-    event = null;
-    temporalContext = 'current';
-  } else if (/(arrested|resigned|announced|declared|elected|fired|released|appointed|died|attacked|protested|accused)/i.test(cleaned)) {
-    type = 'EVENT_CLAIM';
-    event = /arrested|resigned|announced|declared|elected|fired|released|appointed|died|attacked|protested|accused/.exec(cleaned)?.[0] || 'event';
-  }
-
-  if (/jharkhand/i.test(cleaned)) location = 'Jharkhand';
-  if (/india/i.test(cleaned) && !location) location = 'India';
-
-  return {
-    isValidClaim: true,
-    verifiable: true,
-    type,
-    claim: cleaned,
-    subject,
-    event,
-    location,
-    temporalContext,
-  };
 }
